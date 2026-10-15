@@ -330,6 +330,8 @@ function getChatState() {
         chatState.characters = { char: '', user: '', extra: [] };
     }
     if (!Array.isArray(chatState.characters.extra)) chatState.characters.extra = [];
+    // Рефы: { char|user|<id доп. персонажа>: { path, always } }.
+    if (!chatState.refs || typeof chatState.refs !== 'object') chatState.refs = {};
     return chatState;
 }
 
@@ -996,11 +998,11 @@ function getUploadFolderName() {
 }
 
 /** Сохраняет картинку через таверну в /user/images/<папка>/. */
-async function uploadImage(dataUrl, folder) {
+async function uploadImage(dataUrl, folder, prefix = 'glw') {
     const match = String(dataUrl).match(/^data:image\/([\w+.-]+);base64,(.+)$/);
     if (!match) throw new Error('картинка пришла в странном формате');
     const format = match[1] === 'jpeg' ? 'jpg' : match[1];
-    const filename = `glw_${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    const filename = `${prefix}_${new Date().toISOString().replace(/[:.]/g, '-')}_${Math.random().toString(36).slice(2, 6)}`;
     const response = await fetch('/api/images/upload', {
         method: 'POST',
         headers: getContext().getRequestHeaders(),
@@ -1013,6 +1015,81 @@ async function uploadImage(dataUrl, folder) {
     const result = await response.json();
     if (!result?.path) throw new Error('таверна не вернула путь к файлу');
     return result.path;
+}
+
+// ─── Рефы ────────────────────────────────────────────────────────────────
+
+// Больше четырёх — путаница и слоп.
+const MAX_REFS = 4;
+// Папка для рефов на сервере (/user/images/glw_refs/).
+const REF_FOLDER = 'glw_refs';
+// Та же приписка, что у Frameweaver: с ней прокся уже проверена.
+const REF_PROMPT_INSTRUCTION = '[CRITICAL: The reference image(s) attached show the EXACT appearance of the character(s). You MUST precisely copy their: face structure, eye color, hair color and style, skin tone, body type, clothing, and all distinctive features. Do not deviate from the reference appearances.]';
+
+function escapeRegExp(text) {
+    return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Имя целым словом в тексте, без учёта регистра. Через запятую — варианты имени. */
+function nameMatchesText(nameField, text) {
+    if (!nameField || !text) return false;
+    for (const alias of String(nameField).split(',').map(a => a.trim()).filter(Boolean)) {
+        const words = alias.split(/\s+/).filter(Boolean).map(escapeRegExp);
+        if (!words.length) continue;
+        const pattern = `(?<![\\p{L}\\p{M}\\p{N}_])${words.join('\\s+')}(?![\\p{L}\\p{M}\\p{N}_])`;
+        if (new RegExp(pattern, 'iu').test(text)) return true;
+    }
+    return false;
+}
+
+/** Все персонажи чата с рефами: { key, name, path, always } в порядке панели. */
+function getRefEntries() {
+    const chatState = getChatState();
+    if (!chatState) return [];
+    const context = getContext();
+    const out = [];
+    const push = (key, name) => {
+        const ref = chatState.refs[key];
+        if (ref?.path) out.push({ key, name: String(name || '').trim(), path: ref.path, always: !!ref.always });
+    };
+    if (!isGroupChat()) push('char', context.name2);
+    push('user', context.name1);
+    for (const extra of chatState.characters.extra) push(extra.id, extra.name);
+    return out;
+}
+
+/** Какие рефы уходят с этим промптом: «всегда» и те, чьё имя есть в промпте. Не больше 4. */
+function pickRefsForPrompt(prompt) {
+    return getRefEntries()
+        .filter(entry => entry.always || nameMatchesText(entry.name, prompt))
+        .slice(0, MAX_REFS);
+}
+
+/** Файл рефа с сервера таверны → data URL. */
+async function loadRefDataUrl(path, signal) {
+    const response = await fetch(path, { signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error('не прочитался файл'));
+        reader.readAsDataURL(blob);
+    });
+}
+
+/** Сохраняет картинку рефа на сервер, возвращает путь. */
+async function saveRefImage(dataUrl) {
+    return await uploadImage(dataUrl, REF_FOLDER, 'glw_ref');
+}
+
+function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(new Error('не прочитался файл'));
+        reader.readAsDataURL(file);
+    });
 }
 
 // ─── Рисование ───────────────────────────────────────────────────────────
@@ -1069,7 +1146,25 @@ async function runDraw(target) {
 
     await writeSwipeData(target, { drawStatus: 'drawing', drawError: null, drawStartedAt: Date.now() });
     toastr.info('Рисую в GPT…', TOAST_TITLE, { timeOut: 2000 });
-    glwLog('INFO', `Рисую #${target.messageId}: ${model}, ${size}, качество «${quality || 'по умолчанию'}», стиль «${style?.name || 'нет'}»`, finalPrompt);
+
+    // Рефы: читаем файлы; битый реф пропускаем, рисуем без него.
+    const refNames = [];
+    const refImages = [];
+    for (const entry of pickRefsForPrompt(data.prompt)) {
+        try {
+            refImages.push(await loadRefDataUrl(entry.path, job.controller.signal));
+            refNames.push(entry.name.split(',')[0].trim() || '?');
+        } catch (error) {
+            if (error?.name === 'AbortError') break;
+            glwLog('WARN', `Реф «${entry.name}» не прочитался:`, error);
+            toastr.warning(`Реф «${entry.name || '?'}» не найден, рисую без него`, TOAST_TITLE, { timeOut: 4000 });
+        }
+    }
+    if (refImages.length) {
+        body.prompt = `${REF_PROMPT_INSTRUCTION}\n\n${finalPrompt}`;
+        body.image = refImages.length === 1 ? refImages[0] : refImages;
+    }
+    glwLog('INFO', `Рисую #${target.messageId}: ${model}, ${size}, качество «${quality || 'по умолчанию'}», стиль «${style?.name || 'нет'}», рефы: ${refNames.join(', ') || 'нет'}`, body.prompt);
 
     let path = null;
     let failure = null;
@@ -1115,8 +1210,9 @@ async function runDraw(target) {
 
     const image = {
         path,
-        prompt: finalPrompt,
+        prompt: body.prompt,
         styleName: style?.name || '',
+        refs: refNames,
         aspect,
         size,
         model,
@@ -1702,6 +1798,7 @@ function renderMainView() {
     if (hasPrompt && data.wish) meta.push(`пожелание: ${data.wish}`);
     if (image) {
         meta.push(`картинка: ${image.size}, ${image.model}${image.styleName ? `, ${image.styleName}` : ''}`);
+        if (Array.isArray(image.refs) && image.refs.length) meta.push(`рефы: ${image.refs.join(', ')}`);
     }
     metaEl.textContent = meta.join(' · ');
     metaEl.hidden = !meta.length;
@@ -1765,6 +1862,28 @@ function renderTagsPanel() {
     const context = getContext();
     const chars = chatState.characters;
 
+    const refBlock = (refKey) => {
+        const ref = chatState.refs[refKey];
+        const has = !!ref?.path;
+        return `
+            <div class="glw-ref">
+                ${has
+                    ? `<img class="glw-ref-thumb" src="${escapeHtml(ref.path)}" alt="" title="Открыть в полный размер" data-act="ref-view">`
+                    : '<div class="glw-ref-thumb glw-ref-empty"><i class="fa-solid fa-image"></i></div>'}
+                <div class="glw-ref-ctrl">
+                    <div class="glw-ref-btns">
+                        <button type="button" class="glw-btn glw-btn-small" data-act="ref-upload">📎 ${has ? 'Заменить реф' : 'Загрузить реф'}</button>
+                        ${has ? '<button type="button" class="glw-icon" data-act="ref-remove" title="Убрать реф"><i class="fa-solid fa-xmark"></i></button>' : ''}
+                    </div>
+                    <label class="glw-ref-always"${has ? '' : ' hidden'}>
+                        <input type="checkbox" data-act="ref-always"${ref?.always ? ' checked' : ''}>
+                        <span>Всегда отправлять</span>
+                    </label>
+                </div>
+                <input type="file" accept="image/*" data-act="ref-file" hidden>
+            </div>`;
+    };
+
     const row = (slot, name, tags, { editableName = false, id = '' } = {}) => `
         <div class="glw-char" data-slot="${slot}" data-id="${escapeHtml(id)}">
             <div class="glw-char-top">
@@ -1775,6 +1894,7 @@ function renderTagsPanel() {
                 ${editableName ? '<button type="button" class="glw-icon" data-act="remove" title="Удалить"><i class="fa-solid fa-trash"></i></button>' : ''}
             </div>
             <textarea class="text_pole glw-char-tags" data-f="tags" rows="3" placeholder="${escapeHtml(TAGS_PLACEHOLDER)}">${escapeHtml(tags)}</textarea>
+            ${refBlock(slot === 'extra' ? id : slot)}
         </div>`;
 
     const rows = [];
@@ -1787,6 +1907,8 @@ function renderTagsPanel() {
     panel.innerHTML = `
         <div class="glw-tags-title">Персонажи этого чата</div>
         ${isGroupChat() ? '<div class="glw-hint">В групповом чате добавь участников через ＋.</div>' : ''}
+        <button type="button" class="glw-btn glw-btn-import" data-act="import-fw">Взять рефы из Frameweaver</button>
+        <div class="glw-hint">Реф уходит, если имя персонажа есть в промпте или стоит «Всегда отправлять». Не больше ${MAX_REFS}. Несколько имён — через запятую.</div>
         ${rows.join('')}
         <button type="button" class="glw-btn" data-act="add">＋ Добавить персонажа</button>`;
 
@@ -1805,9 +1927,207 @@ function renderTagsPanel() {
         rowEl.querySelector('[data-act="remove"]')?.addEventListener('click', async () => {
             const chatState2 = getChatState();
             chatState2.characters.extra = chatState2.characters.extra.filter(x => x.id !== rowEl.dataset.id);
+            delete chatState2.refs[rowEl.dataset.id];
             await saveChatState();
             renderTagsPanel();
         });
+        bindRefControls(rowEl);
+    }
+
+    panel.querySelector('[data-act="import-fw"]').addEventListener('click', (e) => importRefsFromFrameweaver(e.currentTarget));
+}
+
+/** Ключ рефа для строки панели. */
+function getRowRefKey(rowEl) {
+    return rowEl.dataset.slot === 'extra' ? rowEl.dataset.id : rowEl.dataset.slot;
+}
+
+function bindRefControls(rowEl) {
+    const fileInput = rowEl.querySelector('[data-act="ref-file"]');
+    rowEl.querySelector('[data-act="ref-upload"]').addEventListener('click', () => fileInput.click());
+    rowEl.querySelector('[data-act="ref-view"]')?.addEventListener('click', (e) => openLightbox(e.currentTarget.getAttribute('src')));
+
+    fileInput.addEventListener('change', async () => {
+        const file = fileInput.files?.[0];
+        fileInput.value = '';
+        if (!file) return;
+        if (!/^image\//.test(file.type)) {
+            toastr.warning('Это не картинка', TOAST_TITLE, { timeOut: 2500 });
+            return;
+        }
+        const chatId = getCurrentChatId();
+        const refKey = getRowRefKey(rowEl);
+        try {
+            const path = await saveRefImage(await readFileAsDataUrl(file));
+            if (getCurrentChatId() !== chatId) return;
+            const chatState = getChatState();
+            if (!chatState) return;
+            chatState.refs[refKey] = { path, always: !!chatState.refs[refKey]?.always };
+            await saveChatState();
+            renderTagsPanel();
+        } catch (error) {
+            glwLog('WARN', 'Реф не сохранился:', error);
+            toastr.error(`Реф не сохранился (${String(error?.message || error).slice(0, 120)})`, TOAST_TITLE, { timeOut: 5000 });
+        }
+    });
+
+    rowEl.querySelector('[data-act="ref-remove"]')?.addEventListener('click', async () => {
+        const chatState = getChatState();
+        if (!chatState) return;
+        delete chatState.refs[getRowRefKey(rowEl)];
+        await saveChatState();
+        renderTagsPanel();
+    });
+
+    rowEl.querySelector('[data-act="ref-always"]')?.addEventListener('change', async (e) => {
+        const chatState = getChatState();
+        const ref = chatState?.refs[getRowRefKey(rowEl)];
+        if (!ref) return;
+        ref.always = e.currentTarget.checked;
+        await saveChatState();
+    });
+}
+
+// ─── Импорт рефов из Frameweaver ─────────────────────────────────────────
+//
+// Frameweaver хранит рефы в extensionSettings.inline_image_gen: общие слоты
+// (charRef, userRef, npcReferences), по персонажу (characterRefs[владелец])
+// или по чату (chatMetadata.iig_refs) — смотря что выбрано у него в refScope.
+// Берём его текущий набор; если там пусто — пробуем остальные.
+
+function hasFwImage(ref) {
+    return !!(ref && (ref.imagePath || ref.imageBase64 || ref.imageData));
+}
+
+function getFrameweaverRefContainer() {
+    const context = getContext();
+    const fw = context.extensionSettings?.inline_image_gen;
+    if (!fw || typeof fw !== 'object') return null;
+
+    const chatBucket = context.chatMetadata?.iig_refs;
+    let ownerKey = null;
+    if (context.groupId) ownerKey = `group:${String(context.groupId)}`;
+    else {
+        const avatar = context.characters?.[context.characterId]?.avatar;
+        if (avatar) ownerKey = `character:${avatar}`;
+    }
+    const charBucket = ownerKey ? fw.characterRefs?.[ownerKey] : null;
+
+    const byScope = { 'per-chat': chatBucket, 'per-character': charBucket, global: fw };
+    const order = [fw.refScope, 'per-chat', 'per-character', 'global'];
+    const filled = (c) => c && typeof c === 'object'
+        && [c.charRef, c.userRef, ...(Array.isArray(c.npcReferences) ? c.npcReferences : [])].some(hasFwImage);
+    for (const scope of order) {
+        if (filled(byScope[scope])) return { container: byScope[scope], fw };
+    }
+    return { container: null, fw };
+}
+
+/** Картинка рефа фрейма → data URL (файл или base64). */
+async function fwRefToDataUrl(ref) {
+    if (ref.imagePath) {
+        try { return await loadRefDataUrl(ref.imagePath); } catch (error) {
+            if (!ref.imageBase64 && !ref.imageData) throw error;
+        }
+    }
+    const b64 = String(ref.imageBase64 || ref.imageData || '');
+    if (b64.startsWith('data:')) return b64;
+    const mime = b64.startsWith('/9j/') ? 'image/jpeg' : b64.startsWith('UklGR') ? 'image/webp' : 'image/png';
+    return `data:${mime};base64,${b64}`;
+}
+
+function firstAlias(name) {
+    return String(name || '').split(',')[0].trim().toLowerCase();
+}
+
+async function importRefsFromFrameweaver(button) {
+    const context = getContext();
+    const chatState = getChatState();
+    if (!chatState) return;
+    const found = getFrameweaverRefContainer();
+    if (!found) {
+        toastr.warning('Frameweaver не найден', TOAST_TITLE, { timeOut: 3000 });
+        return;
+    }
+    if (!found.container) {
+        toastr.warning('У Frameweaver нет рефов для этого чата', TOAST_TITLE, { timeOut: 3000 });
+        return;
+    }
+    const { container, fw } = found;
+
+    // План: куда ляжет каждый реф фрейма.
+    const plan = [];
+    const nameOrFallback = (ref, fallback) => String(ref?.name || fallback || '').trim();
+    const findExtra = (name) => chatState.characters.extra.find(x => firstAlias(x.name) && firstAlias(x.name) === firstAlias(name));
+
+    if (hasFwImage(container.charRef)) {
+        const name = nameOrFallback(container.charRef, context.name2);
+        if (!isGroupChat()) plan.push({ ref: container.charRef, key: 'char', name, always: !!fw.charRefAlways });
+        else if (name) plan.push({ ref: container.charRef, extraName: name, always: !!fw.charRefAlways });
+    }
+    if (hasFwImage(container.userRef)) {
+        plan.push({ ref: container.userRef, key: 'user', name: nameOrFallback(container.userRef, context.name1), always: !!fw.userRefAlways });
+    }
+    for (const npc of (Array.isArray(container.npcReferences) ? container.npcReferences : [])) {
+        if (!hasFwImage(npc) || !String(npc.name || '').trim()) continue;
+        const name = String(npc.name).trim();
+        const lower = firstAlias(name);
+        if (!isGroupChat() && lower === firstAlias(context.name2)) plan.push({ ref: npc, key: 'char', name, always: false });
+        else if (lower === firstAlias(context.name1)) plan.push({ ref: npc, key: 'user', name, always: false });
+        else plan.push({ ref: npc, extraName: name, always: false });
+    }
+    if (!plan.length) {
+        toastr.warning('У Frameweaver нет рефов для этого чата', TOAST_TITLE, { timeOut: 3000 });
+        return;
+    }
+
+    // Не трогаем уже загруженное без спроса.
+    const conflicts = plan.filter(item => {
+        const key = item.key || findExtra(item.extraName)?.id;
+        return key && chatState.refs[key]?.path;
+    });
+    if (conflicts.length) {
+        const answer = await context.callGenericPopup(
+            `У ${conflicts.map(c => c.name || c.extraName).join(', ')} уже есть реф. Заменить рефами из Frameweaver?`,
+            context.POPUP_TYPE.CONFIRM);
+        if (answer !== context.POPUP_RESULT.AFFIRMATIVE) return;
+    }
+
+    const chatId = getCurrentChatId();
+    button.disabled = true;
+    toastr.info('Забираю рефы из Frameweaver…', TOAST_TITLE, { timeOut: 2000 });
+    let taken = 0;
+    let failed = 0;
+    try {
+        for (const item of plan) {
+            let path;
+            try {
+                path = await saveRefImage(await fwRefToDataUrl(item.ref));
+            } catch (error) {
+                failed++;
+                glwLog('WARN', `Реф «${item.name || item.extraName}» из Frameweaver не взялся:`, error);
+                continue;
+            }
+            if (getCurrentChatId() !== chatId) return;
+            const live = getChatState();
+            let key = item.key;
+            if (!key) {
+                let extra = live.characters.extra.find(x => firstAlias(x.name) && firstAlias(x.name) === firstAlias(item.extraName));
+                if (!extra) {
+                    extra = { id: newExtraId(), name: item.extraName, tags: '' };
+                    live.characters.extra.push(extra);
+                }
+                key = extra.id;
+            }
+            live.refs[key] = { path, always: item.always };
+            taken++;
+        }
+        await saveChatState();
+        renderTagsPanel();
+        const tail = failed ? `, не взялось: ${failed}` : '';
+        toastr.success(`Взял рефов: ${taken}${tail}`, TOAST_TITLE, { timeOut: 3000 });
+    } finally {
+        button.disabled = false;
     }
 }
 

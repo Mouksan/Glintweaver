@@ -236,6 +236,56 @@ textarea.glw-char-tags {
 }
 
 #glw_view_tags > .glw-btn { width: 100%; margin-top: 10px; }
+#glw_view_tags > .glw-btn.glw-btn-import { margin: 0 0 4px; }
+
+/* Рефы */
+.glw-ref {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 6px;
+}
+
+.glw-ref-thumb {
+    width: 56px;
+    height: 56px;
+    flex: 0 0 56px;
+    object-fit: cover;
+    border-radius: 6px;
+    border: 1px solid var(--glw-border);
+    cursor: zoom-in;
+}
+
+.glw-ref-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.35;
+    cursor: default;
+    border-style: dashed;
+}
+
+.glw-ref-ctrl {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.glw-ref-btns { display: flex; align-items: center; gap: 4px; }
+
+.glw-ref-always {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.78em;
+    opacity: 0.8;
+    margin: 0;
+    cursor: pointer;
+}
+
+.glw-ref-always[hidden] { display: none; }
+.glw-ref-always input { margin: 0; }
 
 /* ==================== Менеджер пресетов (из борда) ==================== */
 
