@@ -1,0 +1,11 @@
+{
+    "display_name": "Glintweaver",
+    "loading_order": 103,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Mouksan",
+    "version": "0.1.0",
+    "homePage": "https://github.com/Mouksan/Glintweaver"
+}
