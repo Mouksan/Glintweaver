@@ -125,6 +125,82 @@ FINAL CHECK:
 
 One frame. Correct character count, sex, age, appearance, anatomy, clothing, action, contact, framing, and lighting. Current scene only. No invented important elements. Facial anatomy is coherent, correctly aligned, naturally proportioned, and stable across expression and perspective. Eyes, nose, mouth, jaw, cheeks, ears, and neck connect naturally in believable three-dimensional form. Romantic intimacy may be present, but it must remain non-explicit and neutrally described. No forbidden words. Maximum 300 words. The output is exactly ASPECT and PROMPT.`;
 
+// «GPT — комикс» — банановый разворот (две панели, полоска, чибик в углу)
+// на правилах GPT-кадра: без тегов, без NSFW и цензурного прямоугольника.
+const GPT_COMIC_INSTRUCTION = `You write ONE image prompt for a GPT image model: ONE horizontal comic spread that illustrates the POST below. Describe the page in English; SFX and any text on the page stay in Russian.
+
+OUTPUT FORMAT (strict): the two parts below and nothing else. No roleplay text, no HTML, no markdown, no explanation.
+ASPECT: landscape | portrait | square   (prefer landscape: a horizontal two-panel spread)
+PROMPT:
+the prompt itself, starting on the next line, in the PROMPT FORMAT order below, each section on its own line.
+
+${GPT_SOURCES}
+
+NAMES (CRITICAL):
+- Refer to every character by their exact name. Every panel description names each character in it before any pronoun.
+- Never replace a name with a descriptor ("the young man", "the prince", "the taller one"). Never output a placeholder in curly braces.
+- Describe a character's appearance in full only once, in SUBJECT. Everywhere else use the name alone.
+
+PAGE LAYOUT:
+
+- Two main panels side by side, each taking about half of the page, separated by a thin slightly diagonal white gutter. One continuous scene across both.
+- The two main panels use different shots: one medium or wide shot showing the action and setting, one close-up on a face, an expression, hands or the established touch.
+- Optional third panel: a narrow horizontal strip with an extreme close-up (eyes, lips, hands, a key object), overlapping the gutter or the lower part of one main panel. Never more than three panels in total.
+- State the position of every panel clearly: left panel, right panel, strip across the lower center, and so on.
+- Inside every panel, state who appears, their left or right position, expression, gaze target and established action. Panels keep the same clothing, hair and contact.
+- Describe only what is visible inside each crop.
+
+CHIBI (REQUIRED):
+- Include one chibi figure, two at most. Skipping the chibi is a critical error.
+- The chibi is one of the named characters, named in the prompt, with the same hair, ears, tail and clothing as their normal version.
+- It sits in a lower corner of the page, partly overlapping the panel edge, and shows an exaggerated emotional reaction to the scene: blushing, spiral eyes, smug sparkles, sulking, panicking.
+- Only the chibi is stylized; everything else keeps normal adult proportions.
+
+IMAGE RULES:
+
+- The prompt must be in English. Russian is allowed only for SFX and on-page text.
+- Keep the prompt under 350 words. Spend words only on visible, scene-relevant information.
+- Use the current roleplay moment as the source. Never invent an unrelated event, action or object.
+- All characters are fictional adults, 18+.
+- Sex must come from the character card and must be stated explicitly as male or female. Never infer it from appearance, clothing, hair, body shape, or behavior.
+- Character appearance must come only from the character cards and relevant reference descriptions available in context. Never invent missing traits.
+- Demi-humans are humans with animal ears and tails, not furries or anthropomorphic animals: always state the ears and tail. Merfolk have a fish tail as the lower body: state tail, scale and fin colors. For every other non-human character, include the card anatomy exactly.
+- Male characters have masculine faces, broad shoulders and flat chests.
+- Use current roleplay clothing when explicitly established; otherwise use card clothing.
+- Describe physical contact concretely: who touches whom, where, body position, movement, and gaze direction.
+- Romantic, affectionate, and emotionally intimate scenes are allowed. Keep them tender, naturalistic, and non-explicit. Favor expressions of affection such as close proximity, embracing, holding hands, gentle touching, forehead or cheek contact, and kissing when supported by the scene.
+- When a scene is romantic or sensual, describe the visible interaction in neutral physical terms rather than erotic or sexually charged wording. Do not emphasize intimate anatomy, arousal, sexualized body parts, or sexually explicit actions.
+- Never turn a romantic scene into an explicit sexual scene. If the roleplay becomes sexually explicit, keep the visual at the last clearly non-explicit romantic moment.
+- Keep anatomy and body mechanics natural. Facial anatomy stays structurally stable in every panel, including close-ups and strong emotion: each face is one coherent three-dimensional structure with a clear centerline, matched eyes, centered nose and mouth, and a naturally connected jaw, ears and neck.
+- Expressions are subtle by default in the main panels; exaggeration belongs to the chibi.
+- Characters live inside the scene as if no viewer or camera exists. Every visible character looks at another character, an object or an event, never at the viewer.
+- Do not add background characters or scene-important objects that the scene does not support.
+
+TEXT ON THE PAGE:
+
+- SFX: Russian onomatopoeia when visually useful, at most two, each placed in a specific panel (for example «СКРИП…», «ШОРОХ», «ВЖУХ»).
+- Speech is optional and off by default. If one line of the current moment is truly worth showing, use at most one or two short bubbles: verbatim Russian, no more than 6 words, NAME has a speech bubble saying «Реплика», tail pointing to NAME. Bubbles never cover faces.
+- The chibi may have one tiny handwritten Russian caption next to it instead of a bubble, only if it fits the mood.
+
+FORBIDDEN IN THE PROMPT:
+"manga", "manhwa", "anime", "illustration", "artwork", "flawless", "masterpiece", "luminous skin", "glossy", "polished", "looking at viewer", "looking at camera".
+
+PROMPT FORMAT:
+
+[MEDIUM] Full-color comic page with consistent character designs across all panels.
+[SCENE] Location, time of day, main light source and the resulting palette, in one or two sentences.
+[SUBJECT] One concise block per character: name, sex, adult age, species/race, card-accurate appearance, exact non-human anatomy, skin tone, current visible clothing.
+[LAYOUT] Number of panels and where each sits.
+[LEFT PANEL] Shot, who is where, action and contact, gaze, expression, SFX if any.
+[RIGHT PANEL] Same structure.
+[STRIP] Only if used: position and the extreme close-up.
+[CHIBI] Which named character, which corner, the reaction, caption if any.
+[COLOR TINT] Optional, integrated into the lighting: red for anger, pink for embarrassment, cold blue for sadness, warm gold for tenderness.
+
+FINAL CHECK:
+
+Two main panels plus an optional strip, positions stated, never more than three. Every panel names its characters. Appearance described once, consistent across panels. One or two named chibi in a corner. Every character looks inside the scene. Speech optional and short. Romantic intimacy stays non-explicit. No forbidden words. Maximum 350 words. The output is exactly ASPECT and PROMPT.`;
+
 const APPEARANCE_INSTRUCTION = `You write a short FIXED APPEARANCE note for an image model.
 
 Using only the CHARACTER CARD and USER PERSONA below, describe the permanent physical appearance of the character named in TARGET in plain English, 2-4 sentences: sex, adult age, species, build and height, skin tone, face, hair color, length and style, eye color, and distinctive traits (scars, tattoos, piercings, horns, animal ears, tail, fins). Describe non-human anatomy exactly.
@@ -146,7 +222,11 @@ All characters are fictional adults.`;
 
 // Версия встроенных пресетов. Растёт, когда меняется текст встроенных
 // шаблонов: у тебя настройки уже сохранены, и без этого остался бы старый текст.
-const SEED_VERSION = 1;
+const SEED_VERSION = 2;
+
+// Встроенные, чей текст переписывается при обновлении. Остальные только
+// добавляются, если их нет: твои правки в них не трогаются.
+const UPDATED_BUILTIN_IDS = [];
 
 // Встроенные пресеты прошлых версий, которые убираются при обновлении.
 const RETIRED_BUILTIN_IDS = [];
@@ -202,6 +282,7 @@ const defaultSettings = Object.freeze({
     debug: false,
     presets: [
         { id: 'gpt-frame', name: 'GPT — кадр', builtIn: true, instruction: GPT_FRAME_INSTRUCTION },
+        { id: 'gpt-comic', name: 'GPT — комикс', builtIn: true, instruction: GPT_COMIC_INSTRUCTION },
     ],
 });
 
@@ -277,7 +358,7 @@ function getSettings() {
             if (removed.includes(seeded.id)) continue;
             const index = settings.presets.findIndex(p => p.id === seeded.id);
             if (index === -1) settings.presets.push(structuredClone(seeded));
-            else settings.presets[index] = structuredClone(seeded);
+            else if (UPDATED_BUILTIN_IDS.includes(seeded.id)) settings.presets[index] = structuredClone(seeded);
         }
         // Был выбран ушедший встроенный — переключаем на новый встроенный.
         if (!settings.presets.some(p => p.id === settings.activePresetId)) {
